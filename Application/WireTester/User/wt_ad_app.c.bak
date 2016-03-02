@@ -1,0 +1,1281 @@
+/**
+  ******************************************************************************
+  * @progect LZY Wire Cube Tester
+	* @file    wt_bsp_ad.c
+  * @author  LZY Zhang Manxin
+  * @version V1.0.0
+  * @date    2014-07-18
+  * @brief   This file provides the E2PROM functions
+  ******************************************************************************
+  */
+
+#define WT_AD_APP_GLOBALS
+
+/* Includes ------------------------------------------------------------------*/
+#include "wt_ad_app.h"
+#include "wt_task_wirefindpoint.h"
+#include "k_bsp.h"
+
+// Var Define
+//static uint32_t cnt_test = 1000;
+static uint8_t  cnt_delay_test	= 3;	//delay for channel switch
+static uint16_t cnt_delay_test_cap = 1500;
+static uint8_t __WireTest_WZK_Mode_Source[] = {	AD_SourceAddr_I8mA, AD_SourceAddr_U45V, AD_SourceAddr_I1mA, AD_SourceAddr_I8mA,
+																								AD_SourceAddr_U45V, AD_SourceAddr_I1mA,AD_SourceAddr_I100uA};
+static uint8_t __WireTest_WZK_Mode_Signal[] = {AD_InputV01, AD_InputV01, AD_InputV01, AD_InputV10, AD_InputV10, AD_InputV10, AD_InputV10};
+//#define		WT_WZK_MOD_12R		0		// I8mA,   P0.1
+//#define		WT_WZK_MOD_27R		1		// U4.5V,  P0.1
+//#define		WT_WZK_MOD_100R		2		// I1mA,   P0.1
+//#define		WT_WZK_MOD_125R		3		// I8mA,   P1.0
+//#define		WT_WZK_MOD_365R		4		// U4.5V,  P1.0
+//#define		WT_WZK_MOD_1K			5		// I1mA,   P1.0
+//#define		WT_WZK_MOD_10K		6		// I100uA, P1.0
+
+//0:12R, 1:27R, 2:100R, 3:125R; 4:365R, 5:1K, 6:10k,
+/**
+  * @brief  线束测试 - 导通
+  * @param  item, result value
+  * @retval 0:ok, 1:value error, 2:test error,
+  */
+#define CNT_DELAY_TEST_Wire		10000	//至少
+uint8_t AD_TestItem_Wire(uint32_t item, uint32_t* result)
+{
+	uint8_t res;
+	uint8_t cnt_error = 0;
+	
+	//关闭激励源
+	AD_Update_SourceAddr(AD_SourceAddr_GNDR, AD_SourceAddr_GNDR);
+	
+	//切换通道
+	while(cnt_error < 10)
+	{
+		res = PortBoard_Update_ChannelAddr(TestFile.test_item[item].p1-1, TestFile.test_item[item].p2-1); //state：0-ok, 1-板卡不存在, 3-无效地址, 4-通信异常
+		if(res == 0) 			break;
+		else if(res == 4) cnt_error++;
+		else							return 2;
+	}
+	if(cnt_error >= 10) return 2;
+	
+	//打开激励源
+	AD_Update_SourceAddr(__WireTest_WZK_Mode_Source[WT_Config.Mode_TestW], AD_SourceAddr_GND);
+	AD_TestRDC_RD();
+	
+	// delay
+	//osDelay(cnt_delay_test); 
+	CLK_Delay(CNT_DELAY_TEST_Wire);
+	
+	//读取输入信号
+	*result = AD_InputState & __WireTest_WZK_Mode_Signal[WT_Config.Mode_TestW];
+	if((AD_InputState & __WireTest_WZK_Mode_Signal[WT_Config.Mode_TestW]) == 0)	//0：小于20欧姆，1：大于20欧姆
+	{
+		return 0;
+	}
+	else
+	{
+		return 1;
+	}
+}
+
+/**
+  * @brief  线束测试 - 高阻
+  * @param  item, result value
+  * @retval 0:ok, 1:value error, 2:test error,
+  */
+uint8_t AD_TestItem_Z(uint32_t item, uint32_t* result)
+{
+	uint8_t res;
+	uint8_t cnt_error = 0;
+	
+	//关闭激励源
+	AD_Update_SourceAddr(AD_SourceAddr_GNDR, AD_SourceAddr_GNDR);
+	
+	//切换通道
+	while(cnt_error < 10)
+	{
+		res = PortBoard_Update_ChannelAddr(TestFile.test_item[item].p1-1, TestFile.test_item[item].p2-1); //state：0-ok, 1-板卡不存在, 3-无效地址, 4-通信异常
+		if(res == 0) 			break;
+		else if(res == 4) cnt_error++;
+		else							return 2;
+	}
+	if(cnt_error >= 10) return 2;
+	
+	//打开激励源
+	AD_Update_SourceAddr(__WireTest_WZK_Mode_Source[WT_Config.Mode_TestZ], AD_SourceAddr_GND);
+	AD_TestRDC_RD();
+	
+	// delay
+	//osDelay(cnt_delay_test); 
+	CLK_Delay(CNT_DELAY_TEST_Wire);
+	
+	//读取输入信号
+	*result = AD_InputState & __WireTest_WZK_Mode_Signal[WT_Config.Mode_TestZ];
+	if((AD_InputState & __WireTest_WZK_Mode_Signal[WT_Config.Mode_TestZ]) != 0)	//0：短路，1：高阻
+	{
+		return 0;
+	}
+	else
+	{
+		return 1;
+	}
+}
+
+/**
+  * @brief  线束测试 - 开关
+  * @param  item, result value
+  * @retval 0:ok, 1:value error, 2:test error,
+  */
+#define TimeoutWaitSwitchTest		(100 * 6)	// 6S
+
+uint8_t AD_TestItem_Switch(uint32_t item, uint32_t* result)
+{
+	uint8_t res, state;
+	uint32_t buf32;
+	uint8_t cnt_error = 0;
+	
+	//关闭激励源
+	AD_Update_SourceAddr(AD_SourceAddr_GNDR, AD_SourceAddr_GNDR);
+	
+	//切换通道
+	while(cnt_error < 10)
+	{
+		res = PortBoard_Update_ChannelAddr(TestFile.test_item[item].p1-1, TestFile.test_item[item].p2-1); //state：0-ok, 1-板卡不存在, 3-无效地址, 4-通信异常
+		if(res == 0) 			break;
+		else if(res == 4) cnt_error++;
+		else							return 2;
+	}
+	if(cnt_error >= 10) return 2;
+	AD_TestRDC_RD();
+	
+	//打开激励源
+	AD_Update_SourceAddr(__WireTest_WZK_Mode_Source[WT_Config.Mode_TestK], AD_SourceAddr_GND);
+	
+	// delay
+	osDelay(cnt_delay_test); 
+	
+	//读取输入信号
+	state = AD_InputState & __WireTest_WZK_Mode_Signal[WT_Config.Mode_TestK];
+	buf32 = 0;
+	while(buf32 < TimeoutWaitSwitchTest)
+	{
+		if(state != (AD_InputState & __WireTest_WZK_Mode_Signal[WT_Config.Mode_TestK])) //ok
+		{
+			*result = AD_InputState & __WireTest_WZK_Mode_Signal[WT_Config.Mode_TestK];
+			return 0;
+		}
+		
+		// wait for timeout
+		osDelay(10); 
+		buf32++;
+	}
+	
+	//return timeout
+	*result = AD_InputState & __WireTest_WZK_Mode_Signal[WT_Config.Mode_TestK];
+	return 1;
+}
+
+/**
+  * @brief  线束测试 - 找点
+  * @param  item, result value
+  * @retval 0:connet test point, 1:not detect, 2:test error,
+  */
+uint8_t AD_TestItem_FindPoint(uint16_t PortNumber)
+{
+	uint8_t res;
+	uint8_t cnt_error = 0;
+	
+	//关闭激励源
+	AD_Update_SourceAddr(AD_SourceAddr_GNDR, AD_SourceAddr_GNDR);
+	
+	//切换通道
+	while(cnt_error < 10)
+	{
+		res = PortBoard_Update_ChannelAddr(PortNumber, AD_ChannelAddr_NULL); //state：0-ok, 1-板卡不存在, 3-无效地址, 4-通信异常
+		if(res == 0) 			break;
+		else if(res == 4) cnt_error++;
+		else							return 2;
+	}
+	if(cnt_error >= 10) return 2;
+	
+	//打开激励源
+	AD_Update_SourceAddr(AD_SourceAddr_U45V, AD_SourceAddr_GNDR);
+	AD_TestRDC_RD();
+	
+	// delay
+	//osDelay(cnt_delay_test); 
+	CLK_Delay(CNT_DELAY_TEST_Wire);
+	
+	//读取输入信号
+	if((AD_InputState & AD_InputV10) == 0)	//连接探针
+	{
+		return 0;
+	}
+	else	//悬空
+	{
+		return 1;
+	}
+}
+
+/**
+  * @brief  线束测试 - 电阻
+  * @param  item, result value
+  * @retval 0:ok, 1:value error, 2:test error,
+  */
+uint8_t AD_TestItem_Res(uint32_t item, uint32_t* result)
+{
+	uint8_t res;
+	uint16_t buf16;
+	uint8_t  buf8;
+	uint8_t  mode;
+	uint32_t VoltageValue;
+	float    ResValue;
+	uint8_t  cnt_error = 0;
+	
+	//关闭激励源
+	AD_Update_SourceAddr(AD_SourceAddr_GNDR, AD_SourceAddr_GNDR);
+	
+	//切换通道
+	while(cnt_error < 10)
+	{
+		res = PortBoard_Update_ChannelAddr(TestFile.test_item[item].p1-1, TestFile.test_item[item].p2-1); //state：0-ok, 1-板卡不存在, 3-无效地址, 4-通信异常
+		if(res == 0) 			break;
+		else if(res == 4) cnt_error++;
+		else							return 2;
+	}
+	if(cnt_error >= 10) return 2;
+	AD_TestRDC_RD();
+	
+	//打开激励源
+	AD_Update_SourceAddr(AD_SourceAddr_U45V, AD_SourceAddr_GND);
+	osDelay(cnt_delay_test); 
+	
+	//读取AD值 - 粗测电阻
+	res = AD_ReadValue(10*1000, &buf16);
+	if(res != 0) return 2;
+
+	//读取AD值 - 粗测电阻
+	buf8 = AD_InputState >> 1;
+	
+	//DC 4.5V, zmx, cndz, 20140813
+	// 27.4 / 0.1V   / A-MAX
+	// 364.9/ 1.0V   / B-MAX
+	// 1.5K / 2.426V / 497C
+	// 12K  / 4.04V  / 832C
+	// 120K / 4.42V  / 911C
+	
+	if(buf8 != 3)
+	{
+		mode = 0;//小于365欧姆
+	}
+	else	// buf8 == 3
+	{
+		if(buf16 < 497) 			mode = 1; //小于 1.5K
+		else if(buf16 < 832)  mode = 2;	//小于  12K
+		else if(buf16 < 911)  mode = 3; //小于 120K
+		else 									mode = 4; //大于 120K
+	}
+	
+	switch(mode)
+	{
+		case 0: //小于160欧姆
+		case 1:	//小于1.5K
+			AD_Update_SourceAddr(AD_SourceAddr_I8mA, AD_SourceAddr_GND);
+			osDelay(cnt_delay_test); 
+			res = AD_ReadValue(10*1000, &buf16);
+			if(res != 0) return 2;
+			VoltageValue = AD_GetVoltage_AutoStep(buf16, (uint8_t)(AD_InputState >> 1));
+			ResValue = VoltageValue / 0.008 / AD_Voltage_MUL;
+			break;
+		
+		case 2:	//小于12K
+			AD_Update_SourceAddr(AD_SourceAddr_I1mA, AD_SourceAddr_GND);
+			osDelay(cnt_delay_test); 
+			res = AD_ReadValue(10*1000, &buf16);
+			if(res != 0) return 2;
+			VoltageValue = AD_GetVoltage_AutoStep(buf16, (uint8_t)(AD_InputState >> 1));
+			ResValue = VoltageValue / 0.001 / AD_Voltage_MUL;
+			break;
+		
+		case 3:	//小于120K
+			AD_Update_SourceAddr(AD_SourceAddr_I100uA, AD_SourceAddr_GND);
+			osDelay(cnt_delay_test); 
+			res = AD_ReadValue(10*1000, &buf16);
+			if(res != 0) return 2;
+			VoltageValue = AD_GetVoltage_AutoStep(buf16, (uint8_t)(AD_InputState >> 1));
+			ResValue = VoltageValue / 0.0001 / AD_Voltage_MUL;
+			break;
+		
+		case 4: //大于120K
+			ResValue = AD_GetRes_FromDCU4V5(buf16);
+			break;
+		
+		default:
+			ResValue = 0;
+			break;
+	}
+	
+	//result
+	*result = ResValue;
+	
+	if((ResValue < TestFile.test_item[item].param2) || (ResValue > TestFile.test_item[item].param3))
+	{
+		return 1;
+	}
+	else
+	{
+		return 0;
+	}
+}
+
+/**
+  * @brief  线束测试 - 二极管
+  * @param  item, result value
+  * @retval 0:ok, 1:value error, 2:test error,
+  */
+uint8_t AD_TestItem_Diode(uint32_t item, uint32_t* result)
+{
+	uint8_t res, IndexSmall, IndexBig;
+	uint16_t buf16;
+	uint32_t VoltageValue[2];
+	uint8_t cnt_error = 0;
+	
+	//关闭激励源
+	AD_Update_SourceAddr(AD_SourceAddr_GNDR, AD_SourceAddr_GNDR);
+	
+	//切换通道
+	while(cnt_error < 10)
+	{
+		res = PortBoard_Update_ChannelAddr(TestFile.test_item[item].p1-1, TestFile.test_item[item].p2-1); //state：0-ok, 1-板卡不存在, 3-无效地址, 4-通信异常
+		if(res == 0) 			break;
+		else if(res == 4) cnt_error++;
+		else							return 2;
+	}
+	if(cnt_error >= 10) return 2;
+	AD_TestRDC_RD();
+	
+	//打开激励源
+	AD_Update_SourceAddr(AD_SourceAddr_U45V, AD_SourceAddr_GND);
+	osDelay(cnt_delay_test); 
+	
+	//读取AD值 - 粗测电阻
+	res = AD_ReadValue(10*1000, &buf16);
+	if(res != 0) return 2;
+	VoltageValue[0] = AD_GetVoltage_AutoStep(buf16, (uint8_t)(AD_InputState >> 1)) / (AD_Voltage_MUL / 100);
+	
+	//打开激励源
+	AD_Update_SourceAddr(AD_SourceAddr_GND, AD_SourceAddr_U45V);
+	osDelay(cnt_delay_test); 
+	
+	//读取AD值 - 粗测电阻
+	res = AD_ReadValue(10*1000, &buf16);
+	if(res != 0) return 2;
+	VoltageValue[1] = AD_GetVoltage_AutoStep(buf16, (uint8_t)(AD_InputState >> 1)) / (AD_Voltage_MUL / 100);
+	
+	//get index of value
+	if(VoltageValue[0] < VoltageValue[1])
+	{
+		IndexSmall = 0;	//Index of small value
+		IndexBig = 1;		//Index of big value
+	}
+	else
+	{
+		IndexSmall = 1;	//Index of small value
+		IndexBig = 0;		//Index of big value
+	}
+	*result = VoltageValue[IndexSmall];
+	
+	// process the result
+	if((VoltageValue[IndexBig] - VoltageValue[IndexSmall]) < 50) //正反向压降小于0.5V
+	{
+		return 1;
+	}	
+	
+	// A K point
+	if((VoltageValue[IndexSmall] < (TestFile.test_item[item].param2*100)) || (VoltageValue[IndexSmall] > (TestFile.test_item[item].param3*100)))
+	{
+		return 1;		
+	}
+	else
+	{
+		if(VoltageValue[IndexSmall] < 100)	return 0;	//Normal//正向压降小于1V 
+		else																return 0;	//LED
+	}
+}
+
+/**
+  * @brief  线束测试 - 电容
+  * @param  item, result value
+  * @retval 0:ok, 1:value error, 2:test error,
+  */
+#define Times_CapADC			300
+
+uint8_t AD_TestItem_Cap(uint32_t item, uint32_t* result)
+{
+	uint8_t res;
+	uint16_t i;
+	uint16_t buf16;
+	uint16_t VoltageValue;
+	uint16_t VoltageBuffer[Times_CapADC];
+	float    ValueCAP;
+	uint8_t cnt_error = 0;
+	
+	//关闭激励源
+	AD_Update_SourceAddr(AD_SourceAddr_GNDR, AD_SourceAddr_GNDR);
+	
+	//切换通道
+	while(cnt_error < 10)
+	{
+		res = PortBoard_Update_ChannelAddr(TestFile.test_item[item].p1-1, TestFile.test_item[item].p2-1); //state：0-ok, 1-板卡不存在, 3-无效地址, 4-通信异常
+		if(res == 0) 			break;
+		else if(res == 4) cnt_error++;
+		else							return 2;
+	}
+	if(cnt_error >= 10) return 2;
+	AD_TestRDC_C();
+	
+	//打开激励源
+	AD_Update_SourceAddr(AD_SourceAddr_W400Hz, AD_SourceAddr_GND);
+	osDelay(cnt_delay_test_cap);	//4.7uF
+
+	//读取AD值
+	for(i=0;i<Times_CapADC;i++)
+	{
+		res = AD_ReadValue(10*1000, &buf16);
+		if(res != 0) return 2;
+		VoltageBuffer[i] = AD_GetVoltage_AutoStep(buf16, (uint8_t)(AD_InputState >> 1)) /(AD_Voltage_MUL / 1000);
+		osDelay(1);
+	}
+	VoltageValue = Voltage_GetValue_FromBuffer(VoltageBuffer, Times_CapADC);
+	
+	//result
+	ValueCAP = AD_GetCAP_FromDCU4V5(VoltageValue);	// VoltageValue 放大1000倍
+	*result = ValueCAP;
+	if((ValueCAP < TestFile.test_item[item].param2) || (ValueCAP > TestFile.test_item[item].param3))
+	{
+		return 1;
+	}
+	else
+	{
+		return 0;
+	}
+}
+
+
+/**
+  * @brief  执行一次线束测试
+* @param  mode, 0:test, 1:wait for wire remove
+	* @retval 0:ok, 1:file errror, 2:test error, 3-user cancel; 
+  */
+static uint8_t WireTest_OneTime(uint32_t* cnt_error_total, uint32_t* cnt_error_z)
+{
+	uint8_t  res = 0;
+	uint32_t buf32;
+	uint32_t cnt_item_error = 0;
+	uint32_t cnt_item_Z_error = 0;
+	uint64_t i;
+	
+	//检测取消按钮
+	if(TestFile.command == 2) return 3;	//0-no operate, 1-start, 2-cancel
+	if(TestFile.item_total == 0) return 1;
+	
+	for(i=0; i<TestFile.item_total; i++)
+	{
+		//检测取消按钮
+		if(TestFile.command == 2) return 3;	//0-no operate, 1-start, 2-cancel
+		
+		//检测ID
+		TestFile.item_Index = i + 1;
+		if(TestFile.test_item[i].id != TestFile.item_Index) return 1;
+		if(TestFile.test_ErrFlag == 0)	//for max error ID，0-no error, 1-error detect and retest
+		{
+			TestFile.item_current = TestFile.test_item[i].id;
+		}
+		else
+		{
+			if(TestFile.test_item[i].id > TestFile.item_current)	//错误通过测试
+			{
+				TestFile.item_current = TestFile.test_item[i].id;
+				TestFile.test_ErrFlag = 0; //for max error ID，0-no error, 1-error detect and retest
+			}
+		}
+
+		//测试类型
+		switch(TestFile.test_item[i].type)
+		{
+			case 'W':	//导通
+				//切换通道
+				res = AD_TestItem_Wire(i, &buf32);	//0:not test, 1:ok, 2:open circuit error 3:dislocation error 4:Z error
+				
+				// 处理测试结果
+				if(res == 0)
+				{
+					TestFile.test_item[i].result = 1;
+				}
+				else if(res == 1)
+				{
+					TestFile.test_item[i].result = 2;
+					cnt_item_error++; //return 2;
+				}
+				else return 2;
+				
+				break;
+			
+			case 'K':	//开关
+				//切换通道
+				res = AD_TestItem_Switch(i, &buf32);	//0:not test, 1:ok, 2:open circuit error 3:dislocation error 4:Z error
+				
+				// 处理测试结果
+				if(res == 0)
+				{
+					TestFile.test_item[i].result = 1;
+				}
+				else if(res == 1)
+				{
+					TestFile.test_item[i].result = 2;
+					cnt_item_error++; //return 2;
+				}
+				else return 2;
+				break;
+				
+			case 'Z':	//高阻
+				res = AD_TestItem_Z(i, &buf32);	//0:not test, 1:ok, 2:open circuit error 3:dislocation error 4:Z error
+				
+				// 处理测试结果
+				if(res == 0)
+				{
+					TestFile.test_item[i].result = 1;
+				}
+				else if(res == 1)
+				{
+					TestFile.test_item[i].result = 4;
+					cnt_item_error++; //return 2;
+					cnt_item_Z_error++;
+				}
+				else return 2;
+				break;
+			
+			case 'R':	//电阻
+				res = AD_TestItem_Res(i, &buf32);	//0:ok, 1:value error, 2:test error,
+				
+				// 处理测试结果
+				if(res == 0)
+				{
+					TestFile.test_item[i].result = 1;
+				}
+				else if(res == 1)
+				{
+					TestFile.test_item[i].result = 2;
+					cnt_item_error++; //return 2;
+				}
+				else return 2;
+				break;
+			
+			case 'D':	//二极管
+				res = AD_TestItem_Diode(i, &buf32);	//0:ok, 1:value error, 2:test error,
+				
+				// 处理测试结果
+				if(res == 0)
+				{
+					TestFile.test_item[i].result = 1;
+				}
+				else if(res == 1)
+				{
+					TestFile.test_item[i].result = 2;
+					cnt_item_error++; //return 2;
+				}
+				else return 2;
+				break;
+			
+			case 'C':	//电容
+				res = AD_TestItem_Cap(i, &buf32);	//0:ok, 1:value error, 2:test error,
+				
+				// 处理测试结果
+				if(res == 0)
+				{
+					TestFile.test_item[i].result = 1;
+				}
+				else if(res == 1)
+				{
+					TestFile.test_item[i].result = 2;
+					cnt_item_error++; //return 2;
+				}
+				else return 2;
+				break;
+			
+			default:
+				return 1;
+				//break;
+		}
+	}
+	
+	
+	*cnt_error_total = cnt_item_error;
+	*cnt_error_z = cnt_item_Z_error;
+	
+	if(cnt_item_Z_error > 0) // z error
+	{
+		TestFile.task_status = 5;	//0-waiting, 1-testing, 2-test error, 3-test ok, 4-waiting remove wire, 5-testing & Z error
+		//BSP_UartAudioNG_BeepOn(255); 	//0-off, 1- 1 beep, 2-2beep,3-3beep,255-on
+		//osMessagePut(UartAudioEvent, UartAudioNG_TX_Event, 0);	//播放声音
+		LED4_ON_R();
+	}
+	else // no z error
+	{
+		TestFile.task_status = 1;	//0-waiting, 1-testing, 2-test error, 3-test ok, 4-waiting remove wire, 5-testing & Z error
+		//BSP_UartAudioOK_BeepOn(0); 	//0-off, 1- 1 beep, 2-2beep,3-3beep,255-on
+		LED4_OFF();
+	}
+	
+	
+	TestFile.item_error_count = cnt_item_error;
+	//return ok
+	if(cnt_item_error == 0) 
+	{
+		LED4_OFF();
+		//osMessagePut(UartAudioEvent, UartAudioSTOP_TX_Event, 0);	//停止播放声音
+		return 0;
+	}
+	else										return 2;
+}
+
+
+/**
+  * @brief  线束测试程序
+  * @param  None
+	* @retval 0:ok, 1:file errror, 2:test error, 3-user cancel; 
+  */
+uint8_t WireTest_Process(void)
+{
+	uint32_t i;
+	uint8_t res;
+	uint32_t cnt_error_total = 0;
+	uint32_t cnt_error_z = 0;
+	static uint8_t state_audio = 0;	//0-stop, 1-repeat play, 2- single play
+	
+	// Init restult
+	for(i=0; i<TestFile.item_total; i++)
+		TestFile.test_item[i].result = 0;
+	TestFile.test_ErrFlag = 0;	//for max error ID，0-no error, 1-error detect and retest
+
+	while(1)
+	{
+		//检测线束导通
+		res = WireTest_OneTime(&cnt_error_total, &cnt_error_z);	//0:ok, 1:file errror, 2:test error, 3-user cancel; 
+		
+		if(state_audio == 0)	//0-stop, 1-repeat play, 2- single play
+		{
+			if(cnt_error_z > 0)
+			{
+				osMessagePut(UartAudioEvent, UartAudioNG_TX_Event, 0);	//播放声音
+				//osDelay(50); 
+				state_audio = 1;	//0-stop, 1-repeat play, 2- single play
+			}
+		}
+		else if(state_audio == 1)	//0-stop, 1-repeat play, 2- single play
+		{
+			if(cnt_error_z == 0)
+			{
+				osMessagePut(UartAudioEvent, UartAudioSTOP_TX_Event, 0);	//停止声音
+				//osDelay(50); 
+				state_audio = 0;	//0-stop, 1-repeat play, 2- single play
+			}
+		}
+				
+		if(res == 2)	//
+		{
+			TestFile.test_ErrFlag = 1;	//for max error ID，0-no error, 1-error detect and retest
+			if(TestFile.item_Index < TestFile.item_current)
+			{
+				for(i=TestFile.item_Index;i<TestFile.item_current;i++)
+				{
+					TestFile.test_item[i].result = 0;	//0:not test, 1:ok, 2:error
+				}
+			}
+		}
+		else
+		{
+			//BSP_UartAudioOK_BeepOn(0); 	//0-off, 1- 1 beep, 2-2beep,3-3beep,255-on
+			LED4_OFF();
+			return res;
+		}
+		
+		// short dealy
+		osDelay(100); 
+	}
+}
+
+/**
+  * @brief  执行一次线束测试，等待线束全部拿走
+	* @param  None
+	* @retval 0:all remove, 1:file errror, 2:not all remove, 3-user cancel; 
+  */
+static uint8_t WireTest_WaitRemove_OneTime(void)
+{
+	uint8_t  res = 0;
+	uint32_t buf32;
+	uint64_t i;
+	uint32_t temp = 0;
+	
+	//检测取消按钮
+	if(TestFile.command == 2) return 3;	//0-no operate, 1-start, 2-cancel
+	if(TestFile.item_total == 0) return 1;
+	
+	for(i=0; i<TestFile.item_total; i++)
+	{
+		//检测取消按钮
+		if(TestFile.command == 2) return 3;	//0-no operate, 1-start, 2-cancel
+		
+		//检测ID
+		TestFile.item_Index = i + 1;
+		if(TestFile.test_item[i].id != TestFile.item_Index) return 1;
+		if(TestFile.test_ErrFlag == 0)	//for max error ID，0-no error, 1-error detect and retest
+		{
+			TestFile.item_current = TestFile.test_item[i].id;
+		}
+		else
+		{
+			if(TestFile.test_item[i].id > TestFile.item_current)	//错误通过测试
+			{
+				TestFile.item_current = TestFile.test_item[i].id;
+				TestFile.test_ErrFlag = 0; //for max error ID，0-no error, 1-error detect and retest
+			}
+		}
+
+		//测试类型
+		switch(TestFile.test_item[i].type)
+		{
+			case 'W':	//导通
+				//切换通道
+			  if(TestFile.test_item[i].result == 0) break;	//0:not test, 1:ok, 2:error
+				temp++;
+			
+				res = AD_TestItem_Wire(i, &buf32);	//0:ok, 1:value error, 2:test error,
+				// 处理测试结果
+				if(res == 0)	//W - ok
+				{
+				}
+				else if(res == 1) //Z
+				{
+					TestFile.test_item[i].result = 0;	//0:not test, 1:ok, 2:error
+				}
+				else
+				{
+					return 2;
+				}
+				break;
+				
+//			case 'Z':	//高阻
+//				res = AD_TestItem_Z(i, &buf32);	//0:ok, 1:value error, 2:test error,
+//				// 处理测试结果
+//				if(res != 1)
+//				{
+//					TestFile.test_item[i].result = 2;
+//					return 2;					
+//				}
+//				TestFile.test_item[i].result = 0;
+//				break;
+				
+//			case 'K':	//开关
+//				//切换通道
+//				res = AD_TestItem_Switch(i, &buf32);	
+//				
+//				// 处理测试结果
+//				if(res != 0)
+//				{
+//					TestFile.test_item[i].result = 2;
+//					return 2;					
+//				}
+//				TestFile.test_item[i].result = 1;
+//				break;
+				
+//			case 'R':	//电阻
+//				res = AD_TestItem_Res(i, &buf32);	
+//				// 处理测试结果
+//				if(res != 0)
+//				{
+//					TestFile.test_item[i].result = 2;
+//					return 2;					
+//				}
+//				TestFile.test_item[i].result = 1;
+//				break;
+//			
+//			case 'D':	//二极管
+//				res = AD_TestItem_Diode(i, &buf32);	
+//				// 处理测试结果
+//				if(res != 0)
+//				{
+//					TestFile.test_item[i].result = 2;
+//					return 2;					
+//				}
+//				TestFile.test_item[i].result = 1;
+//				break;
+//			
+//			case 'C':	//电容
+//				res = AD_TestItem_Cap(i, &buf32);	
+//				// 处理测试结果
+//				if(res != 0)
+//				{
+//					TestFile.test_item[i].result = 2;
+//					return 2;					
+//				}
+//				TestFile.test_item[i].result = 1;
+//				break;
+			
+			default:
+				//return 1;
+				break;
+		}
+	}
+	
+	//return ok
+	if(temp == 0)	return 0;
+	else 					return 2;
+}
+
+/**
+  * @brief  自动测试模式，等待线束拿走
+  * @param  None
+	* @retval 0:all remove, 1:file errror, 3-user cancel; 
+  */
+uint8_t WireTest_WaitForNext(void)				
+{
+	uint8_t res;
+	while(1)
+	{
+		//检测线束导通
+		res = WireTest_WaitRemove_OneTime();	//0:all remove, 1:file errror, 2:not all remove, 3-user cancel; 
+		if(res != 2) 
+		{
+			return res;
+		}
+		osDelay(100);
+	}
+}
+
+
+////自学习项目
+//typedef struct{
+//  uint64_t id;
+//  uint8_t  type;
+//	uint8_t  p1;
+//	uint8_t  p2;
+//	uint32_t  param1; 
+//	uint32_t  param2;
+//	uint32_t  param3;
+//}
+//WT_BSP_STUDY_ITEM;
+
+////自学习文件
+//typedef struct{
+//	WT_BSP_STUDY_ITEM test_item[1000];
+//	uint64_t item_total;
+//	uint8_t  status;	//0:not init, 1:ok, 2:error
+//	uint8_t  command;	//0-no operate, 1-start, 2-cancel
+//}
+//WT_StudyFileTypedef;  
+
+
+
+
+/**
+  * @brief  线束测试 - 导通
+  * @param  j1, j2, result(0：小于20欧姆，1：大于20欧姆)
+  * @retval 0:W, 1:Z, 2-study error,
+  */
+#define CNT_DELAY_STUDY_ITEM		10000	//
+uint8_t AD_StudyItem(uint16_t i, uint16_t j, uint32_t* result)
+{
+	uint8_t res;
+	uint8_t cnt_error = 0;
+	
+	//关闭激励源
+	AD_Update_SourceAddr(AD_SourceAddr_GNDR, AD_SourceAddr_GNDR);
+	AD_TestRDC_RD();
+	
+	//切换通道
+	while(cnt_error < 10)
+	{
+		res = PortBoard_Update_ChannelAddr(i, j); //state：0-ok, 1-板卡不存在, 3-无效地址, 4-通信异常
+		if(res == 0) 			break;
+		else if(res == 4) cnt_error++;
+		else							return 2;
+	}
+	if(cnt_error >= 10) return 2;
+		
+	//打开激励源
+	AD_Update_SourceAddr(AD_SourceAddr_U45V, AD_SourceAddr_GND);
+		
+	// delay
+	//osDelay(CNT_DELAY_STUDY_ITEM); 
+	CLK_Delay(CNT_DELAY_STUDY_ITEM);	//至少6000, 20141125
+	
+	//读取输入信号
+	*result = AD_InputState & __WireTest_WZK_Mode_Signal[WT_Config.Mode_TestW];
+	if(*result == 0)	//0：小于20欧姆，1：大于20欧姆
+	{
+		return 0;
+	}
+	else
+	{
+		return 1;
+	}
+}
+
+/**
+  * @brief  优化学习文件
+  * @param  None
+  * @retval result, 0:ok,
+  */
+uint8_t StudyFile_Optimize(void)
+{
+	uint16_t i;
+	uint32_t cnt_point, cnt_line;
+	uint32_t index;
+	uint16_t PortState[256];
+	uint16_t PortTemp[256];
+
+	//标记端口状态
+	for(i=0;i<256;i++) PortState[i] = 0;
+	for(i=0;i<StudyFile.item_total;i++)
+	{
+		if(StudyFile.study_item[i].type == 'W')
+		{
+			PortState[StudyFile.study_item[i].p1 - 1] = 1;	// for 1st 
+			PortState[StudyFile.study_item[i].p2 - 1] = 1;	// for 1st 
+		}
+	}
+	
+	//计算点位数量
+	cnt_point = 0;
+	for(i=0;i<256;i++)
+	{	
+		if(PortState[i] != 0) cnt_point++;
+	}
+	StudyFile.number_point = cnt_point;
+	
+	//标记端口状态 - 2
+	for(i=0;i<256;i++)
+	{
+		PortState[i] = 0;
+		PortTemp[i] = 0;
+	}
+	//计算回路数量
+	cnt_line  = 0;
+	index = StudyFile.item_total;
+	while(index)
+	{
+		index--;
+		if(StudyFile.study_item[index].type == 'W')
+		{
+			PortState[StudyFile.study_item[index].p1 - 1] = 1;	// for 1st 
+			PortState[StudyFile.study_item[index].p2 - 1] = 0;	// for 1st
+			if(PortTemp[StudyFile.study_item[index].p1 - 1] == 0)
+			{
+				PortTemp[StudyFile.study_item[index].p1 - 1] = 1;
+				cnt_line++;
+			}
+		}
+	}
+	StudyFile.number_line = cnt_line;
+	
+	return 0;
+}
+
+
+/**
+  * @brief  线束自学习程序
+  * @param  None
+* @retval 0:ok, 1:study error, 2:user cancel; 
+  */
+uint8_t WireStudy_Process(uint16_t 	NumStudyPort)	//0:ok, 1:file errror, 2:test error, 3-user cancel; 
+{
+	uint8_t  res;
+	uint16_t i, j;
+	uint32_t buf32;
+	
+	//init
+	StudyFile.item_total = 0;
+	StudyFile.item_index = 0;
+	
+	for(i=0;i<NumStudyPort-1;i++)
+	{
+		if(i==55)
+		{
+			buf32 = 0;
+		}
+		
+		for(j=i+1;j<NumStudyPort;j++)
+		{
+			// user cancle
+			if(StudyFile.command == 2) return 2; //0-no operate, 1-start, 2-cancel
+			
+			//test
+			res = AD_StudyItem(i, j, &buf32);	//0:W, 1:Z, 2-study error,
+			if(res == 0)	//W
+			{
+				StudyFile.study_item[StudyFile.item_index].type = 'W';
+			}
+			else if(res == 1)	//Z
+			{
+				StudyFile.study_item[StudyFile.item_index].type = 'Z';
+			}
+			else	//error
+			{
+				return 2;
+			}
+			
+			//update result
+			StudyFile.study_item[StudyFile.item_index].p1 = i+1;
+			StudyFile.study_item[StudyFile.item_index].p2 = j+1;
+			StudyFile.study_item[StudyFile.item_index].id = StudyFile.item_index+1;
+			StudyFile.study_item[StudyFile.item_index].param1 = buf32;
+			StudyFile.study_item[StudyFile.item_index].param2 = 0;
+			StudyFile.study_item[StudyFile.item_index].param3 = 0;
+			StudyFile.item_index++;
+		}		
+	}
+	
+	StudyFile.item_total = StudyFile.item_index;
+	return 0;
+}
+
+/**
+  * @brief  执行一次找点扫描
+	* @param  None
+  * @retval 0:ok, 1:error, 2-user cancel
+  */
+static uint8_t FindPoint_OneTime(uint16_t PortNumber)
+{
+	uint8_t  res = 0;
+	uint16_t i;
+	uint8_t  buf8[256] = {0};
+	uint16_t cnt = 0;
+	static uint16_t cnt_last = 0;
+	
+	//检测取消按钮
+	if(FindPoint.command == 2) return 2;	//0-no operate, 1-start, 2-cancel
+	if((PortNumber <= 0) || (PortNumber > 256*4)) return 1;
+	for(i=0; i<PortNumber; i++)
+	{
+		//检测取消按钮
+		if(FindPoint.command == 2) return 2;	//0-no operate, 1-start, 2-cancel
+		
+		res = AD_TestItem_FindPoint(i);	//0:connet test point, 1:not detect, 2:test error,
+		// 处理测试结果
+		if(res == 0)	//0:connet test point
+		{
+			buf8[cnt] = i;
+			cnt++;
+		}
+		else if(res == 1) //1:not detect
+		{
+		}
+		else
+		{
+			return 1;
+		}
+	}
+
+	if(cnt == cnt_last)
+	{
+		// beep on/off
+//		if(cnt > 0) BSP_UartAudioFind_BeepOn(255); 	//0-off, 1- 1 beep, 2-2beep,3-3beep,255-on
+//		else				BSP_UartAudioFind_BeepOn(0); 		//0-off, 1- 1 beep, 2-2beep,3-3beep,255-on
+		//
+		//update data
+		FindPoint.task_status = 2; //0-waiting, 1-finding, 2-finding & update data	
+		FindPoint.Items_count = cnt;
+		for(i=0;i<cnt;i++) 	FindPoint.Items_Point[i]= buf8[i];
+		for(;i<256;i++)			FindPoint.Items_Point[i]= 0;
+		FindPoint.task_status = 1; //0-waiting, 1-finding, 2-finding & update data	
+	}
+	cnt_last = cnt;
+	if(cnt > 0) osMessagePut(UartAudioEvent, UartAudioOK_TX_Event, 0);
+	return 0;
+}
+
+
+/**
+  * @brief  WireFindPoint_Process
+  * @param  None
+  * @retval 0-ok, 1-error, 2-user cancel
+  */
+uint8_t WireFindPoint_Process(uint16_t PortNumber)
+{
+	uint8_t res;
+	uint32_t i;
+
+	FindPoint.task_status = 1;	//0-waiting, 1-finding
+	FindPoint.Items_count = 0;
+	for(i=0;i<sizeof(FindPoint.Items_Point);i++) FindPoint.Items_Point[i] = 0;
+
+	BSP_AD_ChangeMode(1);	//0-Normal Mode, 1-FindPoint Mode;
+	while(1)
+	{
+		res = FindPoint_OneTime(PortNumber);	//0:ok, 1:error, 2-user cancel
+		if(res != 0)	//
+		{
+			//BSP_UartAudioFind_BeepOn(0); //0-off, 1- 1 beep, 2-2beep,3-3beep,255-on
+			BSP_AD_ChangeMode(0);	//0-Normal Mode, 1-FindPoint Mode;
+			return res;
+		}
+		osDelay(100);
+	}
+
+}
+
+/**
+  * @brief  线束自学习程序(优化模式)
+  * @param  None
+* @retval 0:ok, 1:study error, 2:user cancel; 
+  */
+uint8_t WireStudy_Optimizmode_Process(uint16_t 	NumStudyPort)	//0:ok, 1:file errror, 2:test error, 3-user cancel; 
+{
+	uint8_t  res;
+	uint16_t i, j;
+	uint32_t buf32=0;
+	uint16_t max_point,min_point;
+	uint16_t port_num;
+	
+	//init
+	StudyFile.item_total = 0;
+	StudyFile.item_index = 0;
+	
+	StudyFile.max_point = 0;
+	StudyFile.min_point = 0;
+	max_point = 0;
+	min_point = 0;
+	port_num=0;
+	
+	for(i=0;i<NumStudyPort-1;i++)
+	{
+		for(j=i+1;j<NumStudyPort;j++)
+		{
+			// user cancle
+			if(StudyFile.command == 2) return 2; //0-no operate, 1-start, 2-cancel
+			
+			//test
+			res = AD_StudyItem(i, j, &buf32);	//0:W, 1:Z, 2-study error,
+			if(res ==0 )
+			{					
+				StudyFile.study_item[port_num].p1 = i;
+				StudyFile.study_item[port_num].p2 = j;
+				port_num++;
+			}
+			StudyFile.item_index++;
+		}	
+	}
+	min_point = StudyFile.study_item[0].p1;
+	max_point = StudyFile.study_item[0].p1;
+	for(i=0;i<port_num;i++)
+	{
+		min_point = (min_point>StudyFile.study_item[i].p1)?StudyFile.study_item[i].p1:min_point;
+		min_point = (min_point>StudyFile.study_item[i].p2)?StudyFile.study_item[i].p2:min_point;
+		max_point = (max_point<StudyFile.study_item[i].p1)?StudyFile.study_item[i].p1:max_point;
+		max_point = (max_point<StudyFile.study_item[i].p2)?StudyFile.study_item[i].p2:max_point;
+	}
+	StudyFile.max_point = max_point;
+	StudyFile.min_point = min_point;
+	
+	return 0;
+}
+
+/**
+  * @brief  优化学习文件(优化模式)
+  * @param  None
+  * @retval result, 0:ok,
+  */
+uint8_t StudyFile_Optimizmode_Optimize(void)	//0:ok, 1:file errror, 2:test error, 3-user cancel; StudyFile_Optimize
+{
+	uint8_t  res;
+	uint16_t i, j;
+	uint32_t buf32=0;
+	uint32_t cnt_point, cnt_line;
+	uint32_t index;
+	uint16_t PortState[256];
+	uint16_t PortTemp[256];
+	//init
+	StudyFile.item_total = 0;
+	StudyFile.item_index = 0;
+	
+	for(i=StudyFile.min_point;i<StudyFile.max_point;i++)
+	{
+		for(j=i+1;j<StudyFile.max_point+1;j++)
+		{
+			// user cancle
+			if(StudyFile.command == 2) return 2; //0-no operate, 1-start, 2-cancel
+			
+			//test
+			res = AD_StudyItem(i, j, &buf32);	//0:W, 1:Z, 2-study error,
+			if(res == 0)	//W
+			{
+				StudyFile.study_item[StudyFile.item_index].type = 'W';
+			}
+			else if(res == 1)	//Z
+			{
+				StudyFile.study_item[StudyFile.item_index].type = 'Z';
+			}
+			else	//error
+			{
+				return 2;
+			}
+			
+			//update result
+			StudyFile.study_item[StudyFile.item_index].p1 = i+1;
+			StudyFile.study_item[StudyFile.item_index].p2 = j+1;
+			StudyFile.study_item[StudyFile.item_index].id = StudyFile.item_index+1;
+			StudyFile.study_item[StudyFile.item_index].param1 = buf32;
+			StudyFile.study_item[StudyFile.item_index].param2 = 0;
+			StudyFile.study_item[StudyFile.item_index].param3 = 0;
+			StudyFile.item_index++;
+		}
+	}
+	
+	StudyFile.item_total = StudyFile.item_index;
+	
+	//标记端口状态
+	for(i=0;i<256;i++) PortState[i] = 0;
+	for(i=0;i<StudyFile.item_total;i++)
+	{
+		if(StudyFile.study_item[i].type == 'W')
+		{
+			PortState[StudyFile.study_item[i].p1 - 1] = 1;	// for 1st 
+			PortState[StudyFile.study_item[i].p2 - 1] = 1;	// for 1st 
+		}
+	}
+	
+	//计算点位数量
+	cnt_point = 0;
+	for(i=0;i<256;i++)
+	{	
+		if(PortState[i] != 0) cnt_point++;
+	}
+	StudyFile.number_point = cnt_point;
+	
+	//标记端口状态 - 2
+	for(i=0;i<256;i++)
+	{
+		PortState[i] = 0;
+		PortTemp[i] = 0;
+	}
+	//计算回路数量
+	cnt_line  = 0;
+	index = StudyFile.item_total;
+	while(index)
+	{
+		index--;
+		if(StudyFile.study_item[index].type == 'W')
+		{
+			PortState[StudyFile.study_item[index].p1 - 1] = 1;	// for 1st 
+			PortState[StudyFile.study_item[index].p2 - 1] = 0;	// for 1st
+			if(PortTemp[StudyFile.study_item[index].p1 - 1] == 0)
+			{
+				PortTemp[StudyFile.study_item[index].p1 - 1] = 1;
+				cnt_line++;
+			}
+		}
+	}
+	StudyFile.number_line = cnt_line;
+	
+	return 0;
+}
+

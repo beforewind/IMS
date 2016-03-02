@@ -1,0 +1,237 @@
+/**
+  ******************************************************************************
+  * @progect LZY Wire Cube Tester
+	* @file    wt_bsp_key_led.c
+  * @author  LZY Zhang Manxin
+  * @version V1.0.0
+  * @date    2014-07-18
+  * @brief   This file provides the E2PROM functions
+  ******************************************************************************
+  */
+
+#define WT_BSP_KEY_LED_GLOBALS
+
+/* Includes ------------------------------------------------------------------*/
+#include "wt_bsp_key_led.h"
+#include "cmsis_os.h"
+
+
+/**
+  * @brief  Configures LED GPIO.
+  * @param  Led: Specifies the Led to be configured. 
+  *   This parameter can be one of following parameters:
+  *     @arg LED3
+  *     @arg LED4
+  * @retval None
+  */
+void BSP_LED_Init(void)
+{
+  GPIO_InitTypeDef  GPIO_InitStruct;
+  
+  /* Enable the GPIO_LED Clock */
+  LED_GPIO_CLK_ENABLE();
+
+  /* Configure the GPIO_LED pin */
+  GPIO_InitStruct.Pin = LED_RUN_PIN;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FAST;
+  HAL_GPIO_Init(LED_PORT, &GPIO_InitStruct);
+
+	LED_RUN_OFF;
+}
+
+/**
+  * @brief  Turns selected LED On.
+  * @param  Led: Specifies the Led to be set on. 
+  *   This parameter can be one of following parameters:
+  *     @arg LED3
+  *     @arg LED4 
+  * @retval None
+  */
+//void BSP_LED_On(uint16_t Led)
+//{
+//  HAL_GPIO_WritePin(LED_PORT, Led, GPIO_PIN_RESET); 
+//}
+
+/**
+  * @brief  Turns selected LED Off.
+  * @param  Led: Specifies the Led to be set off. 
+  *   This parameter can be one of following parameters:
+  *     @arg LED3
+  *     @arg LED4
+  * @retval None
+  */
+//void BSP_LED_Off(uint16_t Led)
+//{
+//  HAL_GPIO_WritePin(LED_PORT, Led, GPIO_PIN_SET); 
+//}
+
+/**
+  * @brief  Toggles the selected LED.
+  * @param  Led: Specifies the Led to be toggled. 
+  *   This parameter can be one of following parameters:
+  *     @arg LED3
+  *     @arg LED4  
+  * @retval None
+  */
+//void BSP_LED_Toggle(uint16_t Led)
+//{
+//  HAL_GPIO_TogglePin(LED_PORT, Led);
+//}
+
+/**
+  * @brief  Initialize KEY_LED & Wheel
+  * @param  None
+  * @retval None
+  */
+void BSP_KEY_LED_Init(void)
+{
+	GPIO_InitTypeDef  GPIO_InitStruct;
+	
+	/* Enable the GPIO Clock */
+  KEYLED_DATx_GPIO_CLK_ENABLE();
+	KEYLED_CTL_GPIO_CLK_ENABLE();
+	KEYLED_CTL_LCH_GPIO_CLK_ENABLE();
+	KEYWHEEL_GPIO_CLK_ENABLE();
+
+  /* Configure the GPIO_DAT pin */
+  GPIO_InitStruct.Pin = KEYLED_DAT0_PIN | KEYLED_DAT1_PIN | KEYLED_DAT2_PIN;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FAST;
+	HAL_GPIO_Init(KEYLED_DATx_PORT, &GPIO_InitStruct);
+	
+	/* Configure the GPIO_CTL pin */
+  GPIO_InitStruct.Pin = KEYLED_CLK_PIN | KEYLED_DAT_PIN;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FAST;
+	HAL_GPIO_Init(KEYLED_CTL_PORT, &GPIO_InitStruct);
+	
+	GPIO_InitStruct.Pin = KEYLED_LCH_PIN;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FAST;
+	HAL_GPIO_Init(KEYLED_CTL_LCH_PORT, &GPIO_InitStruct);
+	
+	KL_CLK_L;
+	KL_LCH_L;
+	KL_DAT_L;
+  
+	/* Configure the GPIO_WHEEL pin 1*/
+  GPIO_InitStruct.Pin = KEYWHEEL_1_PIN | KEYWHEEL_2_PIN;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  GPIO_InitStruct.Speed = GPIO_SPEED_LOW;
+	HAL_GPIO_Init(KEYWHEEL_PORT, &GPIO_InitStruct);
+	/* Enable and set GPIO EXTI Interrupt to the lowest priority */
+  HAL_NVIC_SetPriority((IRQn_Type)(KEYWHEEL_1_INT_EXTI), KEYWHEEL_1_INT_PREPRIO, 0x00);
+  HAL_NVIC_EnableIRQ((IRQn_Type)(KEYWHEEL_1_INT_EXTI));
+	HAL_NVIC_SetPriority((IRQn_Type)(KEYWHEEL_2_INT_EXTI), KEYWHEEL_2_INT_PREPRIO, 0x00);
+  HAL_NVIC_EnableIRQ((IRQn_Type)(KEYWHEEL_2_INT_EXTI));
+	
+//	/* Configure the GPIO_WHEEL pin 2*/
+//  GPIO_InitStruct.Pin = KEYWHEEL_1_PIN;
+//  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+//  GPIO_InitStruct.Pull = GPIO_PULLUP;
+//  GPIO_InitStruct.Speed = GPIO_SPEED_LOW;
+//	HAL_GPIO_Init(KEYWHEEL_PORT, &GPIO_InitStruct);
+
+	//Init
+	KeyLed_State.led = 0;
+	KeyLed_State.key = 0;
+	KeyLed_State.wheel = 0;
+}
+
+/**
+  * @brief  Read KEY & wheel, set led
+  * @param  None
+  * @retval None
+  */
+void BSP_Update_KEY_LED(void)
+{
+	uint32_t buf_key = 0;
+	uint32_t cnt_delay = 10;	//9014 - 至少50, 2N7002 - 至少为5
+	uint8_t i;
+	uint8_t temp;
+	
+	// Init state
+	KL_CLK_L;
+	KL_LCH_L;
+	CLK_Delay(cnt_delay);
+
+	//init key scan state --> 00
+	KL_DAT_L;
+	for(i=0;i<2;i++)
+	{
+		CLK_Delay(cnt_delay);
+		KL_CLK_H;
+		CLK_Delay(cnt_delay);
+		KL_CLK_L;
+	}
+	
+	//push data --> 00000001 00
+	KL_DAT_H;
+	for(i=0;i<8;i++)
+	{
+		CLK_Delay(cnt_delay);
+		KL_CLK_H;
+		CLK_Delay(cnt_delay);
+		KL_CLK_L;
+		KL_DAT_L;
+	}
+	
+	//scan key --> 00 00000001 00
+	for(i=0;i<2;i++)
+	{
+		CLK_Delay(cnt_delay);
+		KL_CLK_H;
+		CLK_Delay(cnt_delay);
+		KL_LCH_H;
+		CLK_Delay(1300);	//1K-102,至少650
+		//read key data
+		temp = (HAL_GPIO_Read(KEYLED_DATx_PORT) & 0x001C) >> 2;
+		buf_key |= temp << (i * 3);
+		//
+		KL_CLK_L;
+		KL_LCH_L;
+	}
+	KeyLed_State.key = buf_key & 0x3F;
+	
+	//push led data
+	for(i=8;i>0;i--)
+	{
+		if((KeyLed_State.led & (1<<(i-1))) != 0)	KL_DAT_H;
+		else																			KL_DAT_L;
+		CLK_Delay(cnt_delay);
+		KL_CLK_H;
+		CLK_Delay(cnt_delay);
+		KL_CLK_L;
+	}
+	
+	//update led state
+	KL_LCH_H;
+	CLK_Delay(cnt_delay);
+	KL_LCH_L;
+}
+	
+/**
+  * @brief  BSP_GetKEY_State
+  * @param  key
+  * @retval None
+  */
+uint8_t BSP_GetKEY_State(uint8_t key)
+{
+	if((KeyLed_State.key & (1<<key)) == 0)
+	{
+		return 0;
+	}
+	else
+	{
+		return 1;
+	}
+}
+
+
+
