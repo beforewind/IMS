@@ -21,7 +21,7 @@
 #define DEF_WT_VERSION_MAIN		(0x01)	/*!< [31:24] main version */
 #define DEF_WT_VERSION_SUB1   (0x00) /*!< [23:16] sub1 version */
 #define DEF_WT_VERSION_SUB2   (0x01) /*!< [15:8]  sub2 version */
-#define DEF_WT_VERSION_RC     (0x01) /*!< [7:0]  release candidate */ 
+#define DEF_WT_VERSION_RC     (0x02) /*!< [7:0]  release candidate */ 
 #define DEF_WT_VERSION				((DEF_WT_VERSION_MAIN << 24)\
 															|(DEF_WT_VERSION_SUB1 << 16)\
 															|(DEF_WT_VERSION_SUB2 << 8 )\

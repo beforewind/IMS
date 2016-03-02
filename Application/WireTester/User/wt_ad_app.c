@@ -49,7 +49,7 @@ static uint8_t __WireTest_WZK_Mode_Source[] = {	AD_SourceAddr_U45V, AD_SourceAdd
 static uint8_t __WireTest_WZK_Mode_Signal[] = {AD_InputV10, AD_InputV10,AD_InputV10};
 //0:365R, 1:1kR, 2:10kR,
 //测试延时等待时间
-static uint16_t __WireTest_Wait_Time[] = {25,45,90,110,150,30000};
+static uint16_t __WireTest_Wait_Time[] = {30,60,90,120,150,30000};
 
 /**
   * @brief  线束测试 - 导通

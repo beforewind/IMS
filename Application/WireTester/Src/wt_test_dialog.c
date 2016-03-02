@@ -311,8 +311,8 @@ static void _cbDialog(WM_MESSAGE * pMsg) {
 				
 			}
 			else osMessagePut(Uart24GHzEvent, Uart24GHZ_IMSTEST_Event, 0);//发送测试请求信息
-			for(i=0;i<200;i++) osDelay(30);
-			if(test_permit != 1 && req_cnt <5)
+			for(i=0;i<100;i++) osDelay(30);
+			if(test_permit != 1 && req_cnt <3)
 			{
 				req_cnt ++;
 				goto test_req;

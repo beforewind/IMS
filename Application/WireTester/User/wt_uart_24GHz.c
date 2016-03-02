@@ -56,6 +56,7 @@ static void Uart24GHz_IMSPRINTOK_Report(void);
 static void Uart24GHz_IMSPRINTNG_Report(void);
 static uint16_t last_rec;
 static uint8_t ok_cnt;
+static uint8_t connect_stat = 0;//0-not connect  1-connect
 //static uint16_t frame_cnt = 0;
 
 //static uint32_t str_size=0;
@@ -156,6 +157,7 @@ void UART24GHZThread(void const * argument)
 					osDelay(1000);
 					UART_24GHz_Buffer_RxClear();
 					WT_UART_24GHz_Cnfig();	//config
+				  if(connect_stat == 1) wt_SetText_Status("网络连接OK");
 					break;
 				case Uart24GHZ_IMSTEST_Event://同IMS Server通信，请求测试
 					Uart24GHz_IMSTEST_Require();	
@@ -441,6 +443,7 @@ static uint8_t WT_UART_24GHz_Cnfig(void)
 	char res[20];
 	char serv_ip[20];
 	
+	connect_stat = 0;//0-not connect  1-connect
 	
 	memset(cmd,0,50);
 	memset(res,0,20);
@@ -612,6 +615,7 @@ static uint8_t WT_UART_24GHz_Cnfig(void)
 						break;
 					case 9:	//设置透传模式
 						WT_UART_24GHz_WrBuf((uint8_t *)"AT+ENTM\r\n", 9);
+						connect_stat = 1;
 						//WT_UART_24GHz_WrBuf((uint8_t *)"AT+SKSTT=1\r\n", 12);
 						break;
 					case 10:	//重新连接
@@ -1027,7 +1031,7 @@ static void Uart24GHz_IMSTESTNG_Reply(void)
 	TxBuffer[i++] = '&';
 	
 	//PPID
-	print_PPID[18] = '6';
+	//print_PPID[18] = '6';
 	for(j=0;j<25;j++)
 	{
 		TxBuffer[i++] = print_PPID[j];
@@ -1171,6 +1175,15 @@ static void Uart24GHz_IMSPRINTNG_Report(void)
 	{
 		TxBuffer[i++] = printing_PPID[j];
 	}
+	//错误类型
+	TxBuffer[i++] = '&';
+	TxBuffer[i++] = NG_type;
+	//错误点位
+	TxBuffer[i++] = '&';
+	for(j=0;j<8;j++)
+	{
+		TxBuffer[i++] = NG_points[j];
+	}
 	/****** Send ***********************************************************/
-	WT_UART_24GHz_WrBuf(TxBuffer, 30);
+	WT_UART_24GHz_WrBuf(TxBuffer, 41);
 }
